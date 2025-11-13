@@ -1,0 +1,5 @@
+python-dotenv
+ultralytics
+deep-sort-realtime
+opencv-python
+requests
