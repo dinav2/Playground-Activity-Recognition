@@ -188,6 +188,7 @@ def extract_frames_ffmpeg(video_path: str, rel_dir: str, fps: float) -> List[str
         "-i", video_path,
         "-vf", f"fps={fps}",
         "-q:v", "2",
+        "-start_number", "0",
         out_pattern,
     ]
     log.info("Extracting frames → %s @ %.1f FPS", rel_dir, fps)
@@ -216,9 +217,8 @@ def _iou_xyxy(a: Iterable[float], b: Iterable[float]) -> float:
     area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
     return float(inter / (area_a + area_b - inter + 1e-9))
 
-
-def extract_person_tracks(
-    video_path: str,
+def extract_person_tracks_from_jpgs(
+    frame_rels: List[str],
     *,
     model_path: str = YOLO_WEIGHTS_DEFAULT,
     imgsz: int = YOLO_IMGSZ_DEFAULT,
@@ -226,22 +226,12 @@ def extract_person_tracks(
     device: str = YOLO_DEVICE_DEFAULT,
     out_preview: str | None = None,
 ) -> Tuple[Dict[int, List[Dict[str, Any]]], Dict[str, Any]]:
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise RuntimeError(f"Cannot open: {video_path}")
 
-    width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    in_fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
-    if not in_fps or math.isnan(in_fps) or in_fps <= 1.0:
-        in_fps = 30.0
-        log.debug("Video FPS invalid; defaulting to %.1f", in_fps)
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-    step = in_fps / float(TARGET_FPS)
-    take_indices = [int(round(i * step)) for i in range(int(math.floor(total / step)))]
-    take_indices = [i for i in take_indices if i < total]
-    take_set = set(take_indices)
+    # lee primer frame para dimensiones
+    first = cv2.imread(str(SHARE_HOST / frame_rels[0]))
+    if first is None:
+        raise RuntimeError(f"Cannot read first frame: {frame_rels[0]}")
+    height, width = first.shape[:2]
 
     model = YOLO(model_path)
     tracker = DeepSort(
@@ -250,8 +240,7 @@ def extract_person_tracks(
         max_iou_distance=0.6,
         max_cosine_distance=0.2,
         embedder="mobilenet",
-        half=True,
-        bgr=True,
+        half=True, bgr=True,
     )
 
     preview_writer = None
@@ -260,20 +249,17 @@ def extract_person_tracks(
         preview_writer = cv2.VideoWriter(out_preview, fourcc, TARGET_FPS, (width, height))
 
     tracks: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
-    out_fidx = 0
-    cur_idx = 0
 
-    log.info("Running YOLO-Pose + DeepSORT @ %.1f FPS", TARGET_FPS)
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            break
+    log.info("Running YOLO-Pose + DeepSORT over extracted JPGs (%d frames) @ %.1f FPS",
+             len(frame_rels), TARGET_FPS)
 
-        if cur_idx not in take_set:
-            cur_idx += 1
+    for fidx, rel in enumerate(frame_rels):
+        frame = cv2.imread(str(SHARE_HOST / rel))
+        if frame is None:
             continue
 
         results = model.predict(source=frame, imgsz=imgsz, conf=conf, device=device, verbose=False)
+
         dets_xyxy: List[List[float]] = []
         det_kpts: List[List[List[float]]] = []
         tracker_inputs = []
@@ -289,18 +275,14 @@ def extract_person_tracks(
                 kp_xy = kps.xy.cpu().numpy() if (kps is not None and getattr(kps, "xy", None) is not None) else None
 
                 for i in range(len(xyxy)):
-                    if clss[i] != 0:  # person
-                        continue
-                    if kp_xy is None:
+                    if clss[i] != 0 or kp_xy is None:
                         continue
                     det_box = xyxy[i].tolist()
                     dets_xyxy.append(det_box)
                     det_kpts.append(kp_xy[i].tolist())
-                    tracker_inputs.append((  # tlwh
-                        [det_box[0], det_box[1], det_box[2] - det_box[0], det_box[3] - det_box[1]],
-                        float(confs[i]),
-                        "person",
-                    ))
+                    tracker_inputs.append(([det_box[0], det_box[1],
+                                            det_box[2]-det_box[0], det_box[3]-det_box[1]],
+                                           float(confs[i]), "person"))
 
         track_objs = tracker.update_tracks(tracker_inputs, frame=frame)
 
@@ -308,7 +290,7 @@ def extract_person_tracks(
             if not t.is_confirmed() or t.time_since_update > 0:
                 continue
             tb = list(map(float, t.to_ltrb()))
-            # match to best detection to fetch kpts
+            # empareja bbox→kpts por IoU
             best_j, best_iou = -1, 0.0
             for j, bb in enumerate(dets_xyxy):
                 iou = _iou_xyxy(tb, bb)
@@ -319,7 +301,7 @@ def extract_person_tracks(
             kps = det_kpts[best_j]
             if len(kps) != 17:
                 continue
-            tracks[int(t.track_id)].append({"frame": out_fidx, "kpts_xy": kps})
+            tracks[int(t.track_id)].append({"frame": fidx, "kpts_xy": kps})
 
             if preview_writer:
                 x1, y1, x2, y2 = map(int, tb)
@@ -330,22 +312,19 @@ def extract_person_tracks(
         if preview_writer:
             preview_writer.write(frame)
 
-        out_fidx += 1
-        cur_idx += 1
-
-    cap.release()
     if preview_writer:
         preview_writer.release()
 
     meta = {
-        "in_fps": in_fps,
+        "in_fps": TARGET_FPS,
         "target_fps": TARGET_FPS,
-        "in_frames": total,
-        "out_frames": out_fidx,
+        "in_frames": len(frame_rels),
+        "out_frames": len(frame_rels),
         "width": width,
         "height": height,
     }
     return tracks, meta
+
 
 
 # -------------------------- cvat payload --------------------------
@@ -456,8 +435,8 @@ def main() -> None:
         Path("preview").mkdir(exist_ok=True)
         preview_path = str(Path("preview") / f"{clip_id}_preview.mp4")
 
-    tracks, meta = extract_person_tracks(
-        str(video_path),
+    tracks, meta = extract_person_tracks_from_jpgs(
+        frames,
         model_path=args.model,
         imgsz=args.imgsz,
         conf=args.conf,
