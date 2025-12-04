@@ -1,5 +1,13 @@
-python-dotenv
-ultralytics
-deep-sort-realtime
+# PyTorch is intentionally NOT listed here.
+# Install it separately following the official instructions:
+# https://pytorch.org/get-started/locally/
+
+numpy
+matplotlib
 opencv-python
 requests
+python-dotenv
+pyyaml
+ultralytics>=8.3.0
+deep-sort-realtime>=1.3
+
