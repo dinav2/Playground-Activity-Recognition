@@ -3,9 +3,7 @@
 import argparse
 import json
 import logging
-import math
 import os
-import shlex
 import subprocess
 import time
 from collections import defaultdict
@@ -22,26 +20,28 @@ from ultralytics import YOLO
 
 load_dotenv()
 
+
 def _env(name: str, default: str | None = None, *, required: bool = False) -> str:
     val = os.getenv(name, default)
     if required and (val is None or not str(val).strip()):
         raise SystemExit(f"Missing env: {name}")
     return str(val)
 
-CVAT_URL: str           = _env("CVAT_URL", required=True).rstrip("/")
-API_BASE: str           = f"{CVAT_URL}/api"
-CVAT_USER: str          = _env("CVAT_USER", required=True)
-CVAT_PASS: str          = _env("CVAT_PASS", required=True)
-PROJECT_ID: int         = int(_env("CVAT_PROJECT_ID", required=True))
-PERSON_LABEL_NAME: str  = _env("PERSON_LABEL_NAME", "person")
-SHARE_HOST: Path        = Path(_env("SHARE_HOST", "/srv/cvat_share"))
+
+CVAT_URL: str = _env("CVAT_URL", required=True).rstrip("/")
+API_BASE: str = f"{CVAT_URL}/api"
+CVAT_USER: str = _env("CVAT_USER", required=True)
+CVAT_PASS: str = _env("CVAT_PASS", required=True)
+PROJECT_ID: int = int(_env("CVAT_PROJECT_ID", required=True))
+PERSON_LABEL_NAME: str = _env("PERSON_LABEL_NAME", "person")
+SHARE_HOST: Path = Path(_env("SHARE_HOST", "/srv/cvat_share"))
 
 TARGET_FPS = 15
 
-YOLO_WEIGHTS_DEFAULT    = "yolo11l-pose.pt"
-YOLO_IMGSZ_DEFAULT      = 2560
-YOLO_CONF_DEFAULT       = 0.25
-YOLO_DEVICE_DEFAULT     = "cuda:0"
+YOLO_WEIGHTS_DEFAULT = "yolo11l-pose.pt"
+YOLO_IMGSZ_DEFAULT = 2560
+YOLO_CONF_DEFAULT = 0.25
+YOLO_DEVICE_DEFAULT = "cuda:0"
 
 HTTP_TIMEOUT = (10, 600)
 
@@ -52,6 +52,7 @@ log = logging.getLogger("cvat_pose")
 
 
 # -------------------------- cvat api --------------------------
+
 
 def cvat_create_task(project_id: int, name: str) -> int:
     r = SESSION.post(
@@ -97,7 +98,11 @@ def cvat_upload_from_share(
 
 def cvat_list_jobs(task_id: int) -> List[Dict[str, Any]]:
     # Try new endpoint first
-    r = SESSION.get(f"{API_BASE}/tasks/{task_id}/jobs", params={"page_size": 500}, timeout=HTTP_TIMEOUT)
+    r = SESSION.get(
+        f"{API_BASE}/tasks/{task_id}/jobs",
+        params={"page_size": 500},
+        timeout=HTTP_TIMEOUT,
+    )
     if r.status_code == 200:
         data = r.json()
         if isinstance(data, dict) and "results" in data:
@@ -105,7 +110,11 @@ def cvat_list_jobs(task_id: int) -> List[Dict[str, Any]]:
         if isinstance(data, list):
             return data
     # Fallback to legacy
-    r = SESSION.get(f"{API_BASE}/jobs", params={"task_id": task_id, "page_size": 500}, timeout=HTTP_TIMEOUT)
+    r = SESSION.get(
+        f"{API_BASE}/jobs",
+        params={"task_id": task_id, "page_size": 500},
+        timeout=HTTP_TIMEOUT,
+    )
     r.raise_for_status()
     data = r.json()
     if isinstance(data, dict) and "results" in data:
@@ -115,7 +124,9 @@ def cvat_list_jobs(task_id: int) -> List[Dict[str, Any]]:
     return []
 
 
-def cvat_wait_for_job(task_id: int, *, timeout_s: int = 900, poll_s: float = 2.0) -> int:
+def cvat_wait_for_job(
+    task_id: int, *, timeout_s: int = 900, poll_s: float = 2.0
+) -> int:
     log.info("Waiting for job creation...")
     t0 = time.time()
     last_state = None
@@ -148,16 +159,30 @@ def cvat_wait_for_job(task_id: int, *, timeout_s: int = 900, poll_s: float = 2.0
         time.sleep(poll_s)
 
 
-def cvat_get_skeleton_spec(task_id: int, label_name: str) -> Tuple[int, List[Dict[str, Any]]]:
-    r = SESSION.get(f"{API_BASE}/labels", params={"task_id": task_id, "page_size": 500}, timeout=HTTP_TIMEOUT)
+def cvat_get_skeleton_spec(
+    task_id: int, label_name: str
+) -> Tuple[int, List[Dict[str, Any]]]:
+    r = SESSION.get(
+        f"{API_BASE}/labels",
+        params={"task_id": task_id, "page_size": 500},
+        timeout=HTTP_TIMEOUT,
+    )
     r.raise_for_status()
     data = r.json()
-    labels = data["results"] if isinstance(data, dict) and "results" in data else (data if isinstance(data, list) else [])
+    labels = (
+        data["results"]
+        if isinstance(data, dict) and "results" in data
+        else (data if isinstance(data, list) else [])
+    )
     for lab in labels:
         if lab.get("name") == label_name and lab.get("type") == "skeleton":
-            subs = [{"id": s["id"], "name": s["name"]} for s in (lab.get("sublabels") or [])]
+            subs = [
+                {"id": s["id"], "name": s["name"]} for s in (lab.get("sublabels") or [])
+            ]
             if len(subs) != 17:
-                raise SystemExit(f'Skeleton "{label_name}" has {len(subs)} sublabels, expected 17.')
+                raise SystemExit(
+                    f'Skeleton "{label_name}" has {len(subs)} sublabels, expected 17.'
+                )
             return int(lab["id"]), subs
     raise SystemExit(f'Skeleton label "{label_name}" not found in task {task_id}.')
 
@@ -172,11 +197,14 @@ def cvat_upload_tracks(job_id: int, tracks_payload: List[Dict[str, Any]]) -> Non
         timeout=HTTP_TIMEOUT,
     )
     if r.status_code >= 400:
-        raise RuntimeError(f"Annotations upload failed: HTTP {r.status_code}\n{r.text[:800]}")
+        raise RuntimeError(
+            f"Annotations upload failed: HTTP {r.status_code}\n{r.text[:800]}"
+        )
     log.info("Uploaded %d tracks", len(tracks_payload))
 
 
 # -------------------------- media/io --------------------------
+
 
 def extract_frames_ffmpeg(video_path: str, rel_dir: str, fps: float) -> List[str]:
     out_dir = SHARE_HOST / rel_dir
@@ -184,17 +212,24 @@ def extract_frames_ffmpeg(video_path: str, rel_dir: str, fps: float) -> List[str
     out_pattern = str(out_dir / "%06d.jpg")
 
     cmd = [
-        "ffmpeg", "-y",
-        "-i", video_path,
-        "-vf", f"fps={fps}",
-        "-q:v", "2",
-        "-start_number", "0",
+        "ffmpeg",
+        "-y",
+        "-i",
+        video_path,
+        "-vf",
+        f"fps={fps}",
+        "-q:v",
+        "2",
+        "-start_number",
+        "0",
         out_pattern,
     ]
     log.info("Extracting frames → %s @ %.1f FPS", rel_dir, fps)
     result = subprocess.run(cmd, check=False, capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg failed: {result.stderr.strip()[:500] or result.stdout.strip()[:500]}")
+        raise RuntimeError(
+            f"ffmpeg failed: {result.stderr.strip()[:500] or result.stdout.strip()[:500]}"
+        )
 
     rels = sorted(f"{rel_dir}/{p.name}" for p in out_dir.glob("*.jpg"))
     if not rels:
@@ -203,6 +238,7 @@ def extract_frames_ffmpeg(video_path: str, rel_dir: str, fps: float) -> List[str
 
 
 # -------------------------- detection/tracking --------------------------
+
 
 def _iou_xyxy(a: Iterable[float], b: Iterable[float]) -> float:
     ax1, ay1, ax2, ay2 = a
@@ -217,6 +253,7 @@ def _iou_xyxy(a: Iterable[float], b: Iterable[float]) -> float:
     area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
     return float(inter / (area_a + area_b - inter + 1e-9))
 
+
 def extract_person_tracks_from_jpgs(
     frame_rels: List[str],
     *,
@@ -226,7 +263,6 @@ def extract_person_tracks_from_jpgs(
     device: str = YOLO_DEVICE_DEFAULT,
     out_preview: str | None = None,
 ) -> Tuple[Dict[int, List[Dict[str, Any]]], Dict[str, Any]]:
-
     # lee primer frame para dimensiones
     first = cv2.imread(str(SHARE_HOST / frame_rels[0]))
     if first is None:
@@ -235,30 +271,39 @@ def extract_person_tracks_from_jpgs(
 
     model = YOLO(model_path)
     tracker = DeepSort(
-        max_age=30, n_init=3,
+        max_age=30,
+        n_init=3,
         nms_max_overlap=0.7,
         max_iou_distance=0.6,
         max_cosine_distance=0.2,
         embedder="mobilenet",
-        half=True, bgr=True,
+        half=True,
+        bgr=True,
     )
 
     preview_writer = None
     if out_preview:
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        preview_writer = cv2.VideoWriter(out_preview, fourcc, TARGET_FPS, (width, height))
+        preview_writer = cv2.VideoWriter(
+            out_preview, fourcc, TARGET_FPS, (width, height)
+        )
 
     tracks: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
 
-    log.info("Running YOLO-Pose + DeepSORT over extracted JPGs (%d frames) @ %.1f FPS",
-             len(frame_rels), TARGET_FPS)
+    log.info(
+        "Running YOLO-Pose + DeepSORT over extracted JPGs (%d frames) @ %.1f FPS",
+        len(frame_rels),
+        TARGET_FPS,
+    )
 
     for fidx, rel in enumerate(frame_rels):
         frame = cv2.imread(str(SHARE_HOST / rel))
         if frame is None:
             continue
 
-        results = model.predict(source=frame, imgsz=imgsz, conf=conf, device=device, verbose=False)
+        results = model.predict(
+            source=frame, imgsz=imgsz, conf=conf, device=device, verbose=False
+        )
 
         dets_xyxy: List[List[float]] = []
         det_kpts: List[List[List[float]]] = []
@@ -272,7 +317,11 @@ def extract_person_tracks_from_jpgs(
                 xyxy = boxes.xyxy.cpu().numpy()
                 confs = boxes.conf.cpu().numpy()
                 clss = boxes.cls.cpu().numpy().astype(int)
-                kp_xy = kps.xy.cpu().numpy() if (kps is not None and getattr(kps, "xy", None) is not None) else None
+                kp_xy = (
+                    kps.xy.cpu().numpy()
+                    if (kps is not None and getattr(kps, "xy", None) is not None)
+                    else None
+                )
 
                 for i in range(len(xyxy)):
                     if clss[i] != 0 or kp_xy is None:
@@ -280,9 +329,18 @@ def extract_person_tracks_from_jpgs(
                     det_box = xyxy[i].tolist()
                     dets_xyxy.append(det_box)
                     det_kpts.append(kp_xy[i].tolist())
-                    tracker_inputs.append(([det_box[0], det_box[1],
-                                            det_box[2]-det_box[0], det_box[3]-det_box[1]],
-                                           float(confs[i]), "person"))
+                    tracker_inputs.append(
+                        (
+                            [
+                                det_box[0],
+                                det_box[1],
+                                det_box[2] - det_box[0],
+                                det_box[3] - det_box[1],
+                            ],
+                            float(confs[i]),
+                            "person",
+                        )
+                    )
 
         track_objs = tracker.update_tracks(tracker_inputs, frame=frame)
 
@@ -290,7 +348,7 @@ def extract_person_tracks_from_jpgs(
             if not t.is_confirmed() or t.time_since_update > 0:
                 continue
             tb = list(map(float, t.to_ltrb()))
-            # empareja bbox→kpts por IoU
+            # pair bbox→kpts by IoU
             best_j, best_iou = -1, 0.0
             for j, bb in enumerate(dets_xyxy):
                 iou = _iou_xyxy(tb, bb)
@@ -306,8 +364,15 @@ def extract_person_tracks_from_jpgs(
             if preview_writer:
                 x1, y1, x2, y2 = map(int, tb)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(frame, f"ID {int(t.track_id)}", (x1, max(15, y1 - 7)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                cv2.putText(
+                    frame,
+                    f"ID {int(t.track_id)}",
+                    (x1, max(15, y1 - 7)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (0, 255, 0),
+                    2,
+                )
 
         if preview_writer:
             preview_writer.write(frame)
@@ -326,9 +391,15 @@ def extract_person_tracks_from_jpgs(
     return tracks, meta
 
 
-
 # -------------------------- cvat payload --------------------------
-def to_cvat_track_with_elements(parent_label_id: int, sublabels: list, frame_samples: list, *, img_w=None, img_h=None):
+def to_cvat_track_with_elements(
+    parent_label_id: int,
+    sublabels: list,
+    frame_samples: list,
+    *,
+    img_w=None,
+    img_h=None,
+):
     """
     parent_label_id: skeleton's label id
     sublabels: 17 sublabels list
@@ -338,15 +409,18 @@ def to_cvat_track_with_elements(parent_label_id: int, sublabels: list, frame_sam
         return None
 
     # Track per keypoint
-    elem_tracks = [{
-        "type": "points",
-        "label_id": int(sub["id"]),
-        "frame": int(frame_samples[0]["frame"]),
-        "group": 0,
-        "source": "manual",
-        "attributes": [],
-        "shapes": []
-    } for sub in sublabels]
+    elem_tracks = [
+        {
+            "type": "points",
+            "label_id": int(sub["id"]),
+            "frame": int(frame_samples[0]["frame"]),
+            "group": 0,
+            "source": "manual",
+            "attributes": [],
+            "shapes": [],
+        }
+        for sub in sublabels
+    ]
 
     # Parent skeleton shapes
     skel_shapes = []
@@ -357,16 +431,18 @@ def to_cvat_track_with_elements(parent_label_id: int, sublabels: list, frame_sam
         if len(kpts) != 17:
             continue
 
-        skel_shapes.append({
-            "type": "skeleton",
-            "label_id": int(parent_label_id),
-            "frame": f,
-            "outside": False,
-            "occluded": False,
-            "keyframe": True,
-            "z_order": 0,
-            "attributes": [],
-        })
+        skel_shapes.append(
+            {
+                "type": "skeleton",
+                "label_id": int(parent_label_id),
+                "frame": f,
+                "outside": False,
+                "occluded": False,
+                "keyframe": True,
+                "z_order": 0,
+                "attributes": [],
+            }
+        )
 
         # Add shape per keypoint to the track
         for idx, (x, y) in enumerate(kpts):
@@ -374,17 +450,19 @@ def to_cvat_track_with_elements(parent_label_id: int, sublabels: list, frame_sam
                 x = max(0.0, min(float(x), img_w - 1))
                 y = max(0.0, min(float(y), img_h - 1))
 
-            elem_tracks[idx]["shapes"].append({
-                "type": "points",
-                "frame": f,
-                "points": [float(x), float(y)],
-                "rotation": 0,
-                "outside": False,
-                "occluded": False,
-                "keyframe": True,
-                "z_order": 0,
-                "attributes": [],
-            })
+            elem_tracks[idx]["shapes"].append(
+                {
+                    "type": "points",
+                    "frame": f,
+                    "points": [float(x), float(y)],
+                    "rotation": 0,
+                    "outside": False,
+                    "occluded": False,
+                    "keyframe": True,
+                    "z_order": 0,
+                    "attributes": [],
+                }
+            )
 
     # Parent Track with shapes and element-tracks
     return {
@@ -398,25 +476,41 @@ def to_cvat_track_with_elements(parent_label_id: int, sublabels: list, frame_sam
     }
 
 
-
 # -------------------------- cli --------------------------
+
 
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Create CVAT task from frames and upload YOLO-Pose+DeepSORT skeleton tracks."
     )
     ap.add_argument("--video", required=True, help="Input video path")
-    ap.add_argument("--rel-dir", required=True, help="Relative dir under CVAT share (e.g. dataset/clip_001)")
+    ap.add_argument(
+        "--rel-dir",
+        required=True,
+        help="Relative dir under CVAT share (e.g. dataset/clip_001)",
+    )
     ap.add_argument("--model", default=YOLO_WEIGHTS_DEFAULT, help="YOLO weights")
-    ap.add_argument("--imgsz", type=int, default=YOLO_IMGSZ_DEFAULT, help="Model image size")
-    ap.add_argument("--conf", type=float, default=YOLO_CONF_DEFAULT, help="Confidence threshold")
-    ap.add_argument("--device", default=YOLO_DEVICE_DEFAULT, help="Device: cuda:0 | cpu")
-    ap.add_argument("--preview", action="store_true", help="Save an annotated preview video")
-    ap.add_argument("-v", "--verbose", action="count", default=0, help="Increase log verbosity")
+    ap.add_argument(
+        "--imgsz", type=int, default=YOLO_IMGSZ_DEFAULT, help="Model image size"
+    )
+    ap.add_argument(
+        "--conf", type=float, default=YOLO_CONF_DEFAULT, help="Confidence threshold"
+    )
+    ap.add_argument(
+        "--device", default=YOLO_DEVICE_DEFAULT, help="Device: cuda:0 | cpu"
+    )
+    ap.add_argument(
+        "--preview", action="store_true", help="Save an annotated preview video"
+    )
+    ap.add_argument(
+        "-v", "--verbose", action="count", default=0, help="Increase log verbosity"
+    )
     args = ap.parse_args()
 
     logging.basicConfig(
-        level=logging.WARNING if args.verbose == 0 else (logging.INFO if args.verbose == 1 else logging.DEBUG),
+        level=logging.WARNING
+        if args.verbose == 0
+        else (logging.INFO if args.verbose == 1 else logging.DEBUG),
         format="%(levelname)s: %(message)s",
     )
 
