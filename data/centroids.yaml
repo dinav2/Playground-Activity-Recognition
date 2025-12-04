@@ -1,0 +1,73 @@
+cameras:
+  columpiocasm1:
+    width: 2560
+    height: 1440
+    objects:
+      - name: obj_1
+        cx: 685
+        cy: 11442
+      - name: obj_2
+        cx: 795
+        cy: 1191
+      - name: obj_3
+        cx: 1596
+        cy: 1206
+      - name: obj_4
+        cx: 1138
+        cy: 1006
+
+  columpioscam2:
+    width: 2560
+    height: 1440
+    objects:
+      - name: obj_1
+        cx: 671
+        cy: 921
+      - name: obj_2
+        cx: 760
+        cy: 894
+      - name: obj_3
+        cx: 1134
+        cy: 925
+      - name: obj_4
+        cx: 1443
+        cy: 720
+
+  columpioscam3:
+    width: 2560
+    height: 1440
+    objects:
+      - name: obj_1
+        cx: 319
+        cy: 932
+
+  columpios_cam4:
+    width: 2560
+    height: 1440
+    objects:
+      - name: obj_1
+        cx: 399
+        cy: 1076
+      - name: obj_2
+        cx: 2052
+        cy: 829
+      - name: obj_3
+        cx: 2122
+        cy: 843
+
+  hundido_cam7:
+    width: 2560
+    height: 1440
+    objects:
+      - name: obj_1
+        cx: 1380
+        cy: 452
+      - name: obj_2
+        cx: 1112
+        cy: 870
+      - name: obj_3
+        cx: 1173
+        cy: 628
+      - name: obj_4
+        cx: 1097
+        cy: 652
